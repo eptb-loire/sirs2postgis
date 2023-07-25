@@ -35,6 +35,7 @@ def sirs2postgis():
     print ('pwd utilisateur PG')
     pwpg=input()
 
+
     #connexion à CouchDB
     couch = couchdb.Server('http://geouser:geopw@{}:5984/'.format(hotesirs))
     db=couch['{}'.format(nomdbsirs)]
@@ -77,7 +78,6 @@ def sirs2postgis():
         maclasse=monid.get('@class') #récupération des enregistrements contenant la valeur @class <==> objets dans SIRS
         if maclasse:
             if maclasse[19:22]!='Ref': #on ne récupère pas les références
-
                 if maclasse[19:].lower() not in l2:
                     #création des tables
                     l2.append(maclasse[19:])#on ajoute à la liste les tables que l'on n'a pas encore
@@ -86,24 +86,27 @@ def sirs2postgis():
                     cur.execute(monappelfn)
                     conn.commit()
                     ligne_fn=cur.fetchall()
-                    l_fn = []
-                    for x in ligne_fn: 
-                        la = ''.join(x)
-                        l_fn.append(la)
-                    conn.commit()
+                    if len(ligne_fn):
+                        l_fn = []
+                        for x in ligne_fn: 
+                            la = ''.join(x)
+                            l_fn.append(la)
+                        conn.commit()
+                        for x in l_fn: 
+                          mesrequetes = x
 
-                    for x in l_fn: 
-                      mesrequetes = x
-                    cur.execute(mesrequetes)
-                    conn.commit()
+                        cur.execute(mesrequetes)
+                        conn.commit()
                     
 
           #insertion des donnees  manquantes de la table
-                moninsert = """insert into {}.{} select * from json_populate_record(NULL::{}.{},%s)""".format(schemapg,maclasse[19:],schemapg,maclasse[19:])
-                cur.execute(moninsert,(json.dumps(monid).lower(),))
-                conn.commit()
-                moncomment ="""comment on table {}.{} is 'Importe de la base sirs {} le {}'""".format(schemapg,maclasse[19:],nomdbsirs,str(datetime.date.today()))
-                cur.execute(moncomment)
-                conn.commit()
+                #il existe une classe report.ModeleRapport non retrouvée dans les xml. Elle pose problème à la création des tables, on exclut donc les classes composées de 2 mots
+                if '.' not in maclasse[19:] :
+                    moninsert = """insert into {}.{} select * from json_populate_record(NULL::{}.{},%s)""".format(schemapg,maclasse[19:],schemapg,maclasse[19:])
+                    cur.execute(moninsert,(json.dumps(monid).lower(),))
+                    conn.commit()
+                    moncomment ="""comment on table {}.{} is 'Importe de la base sirs {} le {}'""".format(schemapg,maclasse[19:],nomdbsirs,str(datetime.date.today()))
+                    cur.execute(moncomment)
+                    conn.commit()
 
 sirs2postgis()
