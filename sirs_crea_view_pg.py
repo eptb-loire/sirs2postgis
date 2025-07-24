@@ -3,6 +3,9 @@
 #09/02/2024 ligne 76 : un json est identifié par les caractères [{ et non uniuqment { (bug sur la table arbrevegetation de vernusson dont le json n'a pas de croche)
 #20/01/2025 (Emilie) : ajout des droits de lectures sur les tables pour les comptes portant le même nom que le schéma
 #20/06/2025 (Emilie): les positions réélles des objets (par opposition aux positions plaquées sur la digue) sont contenues dans le champ position ; la géométrie des vues est donc créée avec les champs positiondebut et positionfin
+#21/07/2025 : dans le champ designation, concaténation de la désignation du SE et de la désignation de l'objet + concaténation de l'abrege et du libelle de la ref
+#pour ne faire qu'une seule base : modifier temporairement auto_sirs2postgis.py pour appeler crea_view surla base souhaitée
+#utiliser  : sirs_crea_view_pg_1base.bat depuis srv-adobe (192.168.1.15)
 ################################################################################################################################
 import psycopg2
 from qgis.core import QgsVectorLayer,QgsDataSourceUri,QgsRelation,QgsEditorWidgetSetup,QgsProject
@@ -38,7 +41,7 @@ def crea_view(nomdb,pgcourt):
 		cur = conn.cursor()
 		#récupération des tables avec une géométrie
 		rqtablegeoiq="select  distinct table_name from information_schema.columns where table_schema='{}' and column_name='geometry' and table_name not like  'v_%'".format(nomschema)#and table_name='desordre'
-		print(rqtablegeoiq)
+		print(nomdb)
 		cur.execute(rqtablegeoiq)
 		conn.commit() 
 		ltablegeoiq = cur.fetchall() 
@@ -63,7 +66,6 @@ def crea_view(nomdb,pgcourt):
 			listechamptexteavectable=[]
 			listegeometrie=[]
 			#la géométrie
-			#rqgeometrie="select distinct (replace(substring(geometry from 1 for (position('(' in geometry))-1)::text,' ','' )) from {}.{} where geometry is not null;".format(nomschema,tgeoiq[0])
 			#il y a des fausses lignes dans sirs (point début=point fin). Il faut les détecter pour en faire des points
 			rqgeometrie="select distinct case 	when st_length(st_geomfromtext(geometry))=0 then 'point'	else 'linestring' end case  from {}.{} where geometry is not null ;".format(nomschema,tgeoiq[0])
 			cur.execute(rqgeometrie)
@@ -89,8 +91,9 @@ def crea_view(nomdb,pgcourt):
 			#si les champs positiondebut et positionfin existent : on les transforme en géométrie et on les supprime de la liste :
 			if 'positiondebut' in listechamptexte:
 				#on utilise ce champ pour créer une géométrie non projetée. Ensuite, on le retire la liste des champs utilisé dans la vue
-				champgeompoint=' st_setsrid(positiondebut::geometry,2154) as geom '
-				champgeomligne=' st_setsrid(st_multi(st_makeline(positiondebut::geometry,positionfin::geometry)),2154) as geom '
+				#le champ positiondebut peut être null
+				champgeompoint=' COALESCE (  st_setsrid(positiondebut::geometry, 2154),st_startpoint(st_setsrid(st_geomfromtext(obj.geometry), 2154))::geometry(Point,2154)) as geom '
+				champgeomligne=' COALESCE ( st_setsrid(st_multi(st_makeline(positiondebut::geometry,positionfin::geometry)),2154), st_multi(st_setsrid(st_geomfromtext(obj.geometry), 2154))::geometry(MultiLineString,2154)) as geom '
 				listechamptexteavectable.remove('obj."positiondebut"')
 				listechamptexteavectable.remove('obj."positionfin"')
 				listechamptexte.remove('positiondebut')
@@ -98,17 +101,30 @@ def crea_view(nomdb,pgcourt):
 			else :
 				champgeompoint=' st_startpoint(st_setsrid(st_geomfromtext(obj.geometry), 2154))::geometry(Point,2154) AS geom '
 				champgeomligne='  st_multi(st_setsrid(st_geomfromtext(obj.geometry), 2154))::geometry(MultiLineString,2154) AS geom '
-			#récupération des champs à référence et des tables de référence
 			champtexte=','.join(listechamptexte)
+
+
+			#ajouter la nomenclature du SE dans la désignation sauf pour la table des tronçons
+			#si le champ désignation existe, on lui ajoute la désignation du SE ou le nom court du SE( si la désignation du SE est vide) + on fait la jointure avec le SE
+			jointurese=""
+			if 'designation' in listechamptexte and 'linearid' in listechamptexte and tgeoiq[0]!='troncondigue':
+				idesignation=listechamptexteavectable.index('obj."designation"')
+				listechamptexteavectable[idesignation]='coalesce(systemeendiguement.designation,\''+pgcourt+'\') ||\' \'||obj.designation as designation'
+				jointurese="\
+					inner join digue_"+pgcourt+"_sirs.troncondigue on obj.linearid=troncondigue._id \
+					inner join digue_"+pgcourt+"_sirs.digue on troncondigue.digueid=digue._id \
+					inner join digue_"+pgcourt+"_sirs.systemeendiguement on digue.systemeendiguementid=systemeendiguement._id "
+			#champtexteavectable a été modifié donc on refait la liste
 			champtexteavectable=','.join(listechamptexteavectable)
+
+			#récupération des champs à référence et des tables de référence
 			listejointureref=''
 			rqtabref="select distinct lesattributs, tableref  from digue.v_listetableref where lower (lesattributs) =any('{"+champtexte+"}') and lestables ilike'"+tgeoiq[0]+"';"
-
 			cur.execute(rqtabref)	
 			conn.commit()
 			ltabref=cur.fetchall()
 			for tabref in ltabref:
-				champtexteavectable=champtexteavectable.replace('obj."'+tabref[0].lower()+'"',"ref{}.libelle as {}".format(tabref[0][:-2],tabref[0][:-2]))
+				champtexteavectable=champtexteavectable.replace('obj."'+tabref[0].lower()+'"',"ref{}.abrege||':'||ref{}.libelle as {}".format(tabref[0][:-2],tabref[0][:-2],tabref[0][:-2]))
 				listejointureref+=" left join digue.{} as ref{} on ref{}.code::text=split_part(obj.{},':',2)".format(tabref[1],tabref[0][:-2],tabref[0][:-2],tabref[0])
 			#table contenant des géométries  : champ géométrie + autres champs texte contenus dans champtexte
 			for geom in listegeometrie:
@@ -119,7 +135,7 @@ def crea_view(nomdb,pgcourt):
 					# 2025-04-07 : pour les désordres, il faut créer la géométrie à partir de position début/position fin car sinon c'est en mode "plaqué"
 					rqcreaview= "\
 					drop view if exists "+nomschema+".v_"+tgeoiq[0]+"_p ;\
-					create or replace view "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" as (select row_number() over() "+nbvu+","+champtexteavectable+", "+champgeompoint+" from "+nomschema+"."+tgeoiq[0]+" as obj "+listejointureref+" where st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154))=0);\
+					create or replace view "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" as (select row_number() over() "+nbvu+","+champtexteavectable+", "+champgeompoint+" from "+nomschema+"."+tgeoiq[0]+" as obj "+listejointureref+jointurese+" where st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154))=0);\
 					comment ON view  "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" is 'Créée le "+str(datetime.date.today())+"';\
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to \"EPLoire_Consult\";\
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to "+nomschema+";\
@@ -133,12 +149,11 @@ def crea_view(nomdb,pgcourt):
 					print(listechamptexte)
 					rqcreaview= "\
 					drop view if exists "+nomschema+".v_"+tgeoiq[0]+"_l ;\
-					create or replace view "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" as (select row_number() over() "+nbvu+","+champtexteavectable+","+champgeomligne+" from "+nomschema+"."+tgeoiq[0]+" as obj "+listejointureref+" where st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154))>0);\
+					create or replace view "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" as (select row_number() over() "+nbvu+","+champtexteavectable+","+champgeomligne+" from "+nomschema+"."+tgeoiq[0]+" as obj "+listejointureref+jointurese+" where st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154))>0);\
 					comment ON view  "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" is 'Créée le "+str(datetime.date.today())+"';\
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to \"EPLoire_Consult\";\
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to "+nomschema+";\
 					"
-				print(rqcreaview)
 				cur.execute(rqcreaview)
 				conn.commit()
 				listevueniv0.append("v_{}_{}".format(tgeoiq[0],geom[0]))
@@ -272,4 +287,6 @@ def crea_view(nomdb,pgcourt):
 		#dans les relations r1, le champ commune est _id
 		#dans le relation r2 le champ commune est tablemere.id=v_vuefille.idv_vuemere ; ex : v_desordreobservations.id=v_desordreobservationsphotos.idv_desordreobservations
 		print(lrelation)
+
+
 
