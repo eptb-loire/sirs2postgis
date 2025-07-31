@@ -4,6 +4,7 @@
 #20/01/2025 (Emilie) : ajout des droits de lectures sur les tables pour les comptes portant le même nom que le schéma
 #20/06/2025 (Emilie): les positions réélles des objets (par opposition aux positions plaquées sur la digue) sont contenues dans le champ position ; la géométrie des vues est donc créée avec les champs positiondebut et positionfin
 #21/07/2025 : dans le champ designation, concaténation de la désignation du SE et de la désignation de l'objet + concaténation de l'abrege et du libelle de la ref
+#31/07/2025 : correction des liens avec les tables ref pour les vues de niveau >1 (observations notamment)
 #pour ne faire qu'une seule base : modifier temporairement auto_sirs2postgis.py pour appeler crea_view surla base souhaitée
 #utiliser  : sirs_crea_view_pg_1base.bat depuis srv-adobe (192.168.1.15)
 ################################################################################################################################
@@ -145,13 +146,13 @@ def crea_view(nomdb,pgcourt):
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to \"EPLoire_Consult\";\
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to "+nomschema+";\
 					"
-					print(rqcreaview)
+					#print(rqcreaview)
 				#le 29/05/2024 : il existe des multilinestring dans couchdb. On passe donc tout en MultiLineString
 				# 2025-04-07 : pour les désordres, il faut créer la géométrie à partir de position début/position fin car sinon c'est en mode "plaqué" ; ajout du code corresondant à la condistion linestring+desordre
 				if geom=='linestring':
-					print('table et champs : ')
-					print(tgeoiq[0])#bornedigue
-					print(listechamptexte)
+					# print('table et champs : ')
+					# print(tgeoiq[0])#bornedigue
+					# print(listechamptexte)
 					rqcreaview= "\
 					drop view if exists "+nomschema+".v_"+tgeoiq[0]+"_l ;\
 					create or replace view "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" as (select row_number() over() "+nbvu+","+champtexteavectable+","+champgeomligne+" from "+nomschema+"."+tgeoiq[0]+" as obj "+listejointureref+jointurese+clausewhereligne+" );\
@@ -205,6 +206,7 @@ def crea_view(nomdb,pgcourt):
 						select  row_number() over() ::text gid,\
 						_id".format(nomschema,tgeoiq[0]+cjson,nomschema,tgeoiq[0]+cjson,nomschema,tgeoiq[0],cjson)
 					lclejsonniv1=[]
+
 					for l in resultlistechampjsonniv1:
 						if l[0]!='_id':
 							rqcreaviewniv1=rqcreaviewniv1+",key->>'{}' as \"{}\"".format(l[0],l[0])
@@ -213,14 +215,16 @@ def crea_view(nomdb,pgcourt):
 					clejsonniv1=','.join(lclejsonniv1)
 					listejointurerefniv1=''
 					#dans le critère lestables ilike on supprime le dernier caractère car il peut y avoir un s dans le champs json et pas dans la table originale
-					rqtabref="select distinct lesattributs, tableref  from digue.v_listetableref where lower (lesattributs) =any('{"+clejsonniv1+"}') and lestables ilike'"+cjson[:-1]+"%';"
+					#31/07/2025 : certaines tables d observations s'appellent abstractObersvation
+					rqtabref="select distinct on  (lesattributs, tableref) lesattributs, tableref,tableref||row_number() over (partition by tableref order by lesattributs)::text rk  from digue.v_listetableref where lower (lesattributs) =any('{"+clejsonniv1+"}') and lestables ilike'%"+cjson[:-1]+"%';"
 					cur.execute(rqtabref)	
 					conn.commit()
 					ltabref=cur.fetchall()
 					for tabref in ltabref:
-						rqcreaviewniv1=rqcreaviewniv1.replace("key->>'"+tabref[0].lower()+"' as \""+tabref[0].lower()+"\"",tabref[1]+".libelle as "+tabref[0][:-2])
-						listejointurerefniv1=listejointurerefniv1+" left join digue."+tabref[1]+" on "+tabref[1]+".code::text=split_part(key->>'"+tabref[0].lower()+"',':',2)"
+						rqcreaviewniv1=rqcreaviewniv1.replace("key->>'"+tabref[0].lower()+"' as \""+tabref[0].lower()+"\"",tabref[2]+".libelle as "+tabref[0][:-2])
+						listejointurerefniv1=listejointurerefniv1+" left join digue."+tabref[1]+" as "+tabref[2]+" on "+tabref[2]+".code::text=split_part(key->>'"+tabref[0].lower()+"',':',2)"
 					rqcreaviewniv1=rqcreaviewniv1+" from t "
+					print(rqcreaviewniv1+listejointurerefniv1)
 					cur.execute(rqcreaviewniv1+listejointurerefniv1+");grant select on table {}.v_{} to \"EPLoire_Consult\",{};".format(nomschema,tgeoiq[0]+cjson,nomschema))
 					
 					conn.commit()
@@ -291,4 +295,3 @@ def crea_view(nomdb,pgcourt):
 		#lrelation contient la liste des relations entre table : r_v_vuemere-r_v_vuefille. Le niveau de la relation est indiquée avec r1 et r2 (dans r1 la table mère est une table géographique)
 		#dans les relations r1, le champ commune est _id
 		#dans le relation r2 le champ commune est tablemere.id=v_vuefille.idv_vuemere ; ex : v_desordreobservations.id=v_desordreobservationsphotos.idv_desordreobservations
-		print(lrelation)
