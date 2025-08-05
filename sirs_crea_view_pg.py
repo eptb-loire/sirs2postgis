@@ -5,6 +5,7 @@
 #20/06/2025 (Emilie): les positions réélles des objets (par opposition aux positions plaquées sur la digue) sont contenues dans le champ position ; la géométrie des vues est donc créée avec les champs positiondebut et positionfin
 #21/07/2025 : dans le champ designation, concaténation de la désignation du SE et de la désignation de l'objet + concaténation de l'abrege et du libelle de la ref
 #31/07/2025 : correction des liens avec les tables ref pour les vues de niveau >1 (observations notamment)
+#05/08/2025 : annulation du comit du 31 juillet concernant la clause where 
 #pour ne faire qu'une seule base : modifier temporairement auto_sirs2postgis.py pour appeler crea_view surla base souhaitée
 #utiliser  : sirs_crea_view_pg_1base.bat depuis srv-adobe (192.168.1.15)
 ################################################################################################################################
@@ -99,13 +100,13 @@ def crea_view(nomdb,pgcourt):
 				listechamptexteavectable.remove('obj."positionfin"')
 				listechamptexte.remove('positiondebut')
 				listechamptexte.remove('positionfin')
-				clausewherepoint=' where st_length(COALESCE (  st_setsrid(obj.positiondebut::geometry, 2154),st_startpoint(st_setsrid(st_geomfromtext(obj.geometry), 2154))::geometry(Point,2154)))=0'
-				clausewhereligne=' where st_length(COALESCE ( st_setsrid(st_multi(st_makeline(obj.positiondebut::geometry,positionfin::geometry)),2154), st_multi(st_setsrid(st_geomfromtext(obj.geometry), 2154))::geometry(MultiLineString,2154)))>0'
+				# clausewherepoint=' where st_length(COALESCE (  st_setsrid(obj.positiondebut::geometry, 2154),st_startpoint(st_setsrid(st_geomfromtext(obj.geometry), 2154))::geometry(Point,2154)))=0'
+				# clausewhereligne=' where st_length(COALESCE ( st_setsrid(st_multi(st_makeline(obj.positiondebut::geometry,positionfin::geometry)),2154), st_multi(st_setsrid(st_geomfromtext(obj.geometry), 2154))::geometry(MultiLineString,2154)))>0'
 			else :
 				champgeompoint=' st_startpoint(st_setsrid(st_geomfromtext(obj.geometry), 2154))::geometry(Point,2154) AS geom '
 				champgeomligne='  st_multi(st_setsrid(st_geomfromtext(obj.geometry), 2154))::geometry(MultiLineString,2154) AS geom '
-				clausewherepoint=' where  st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154)) = 0::double precision'
-				clausewhereligne=' where st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154)) > 0::double precision'
+				# clausewherepoint=' where  st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154)) = 0::double precision'
+				# clausewhereligne=' where st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154)) > 0::double precision'
 			
 			champtexte=','.join(listechamptexte)
 
@@ -141,7 +142,7 @@ def crea_view(nomdb,pgcourt):
 					# 2025-04-07 : pour les désordres, il faut créer la géométrie à partir de position début/position fin car sinon c'est en mode "plaqué"
 					rqcreaview= "\
 					drop view if exists "+nomschema+".v_"+tgeoiq[0]+"_p ;\
-					create or replace view "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" as (select row_number() over() "+nbvu+","+champtexteavectable+", "+champgeompoint+" from "+nomschema+"."+tgeoiq[0]+" as obj "+listejointureref+jointurese+clausewherepoint+");\
+					create or replace view "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" as (select row_number() over() "+nbvu+","+champtexteavectable+", "+champgeompoint+" from "+nomschema+"."+tgeoiq[0]+" as obj "+listejointureref+jointurese+" where st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154))=0);\
 					comment ON view  "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" is 'Créée le "+str(datetime.date.today())+"';\
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to \"EPLoire_Consult\";\
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to "+nomschema+";\
@@ -155,7 +156,7 @@ def crea_view(nomdb,pgcourt):
 					# print(listechamptexte)
 					rqcreaview= "\
 					drop view if exists "+nomschema+".v_"+tgeoiq[0]+"_l ;\
-					create or replace view "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" as (select row_number() over() "+nbvu+","+champtexteavectable+","+champgeomligne+" from "+nomschema+"."+tgeoiq[0]+" as obj "+listejointureref+jointurese+clausewhereligne+" );\
+					create or replace view "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" as (select row_number() over() "+nbvu+","+champtexteavectable+","+champgeomligne+" from "+nomschema+"."+tgeoiq[0]+" as obj "+listejointureref+jointurese+" where st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154))>0 );\
 					comment ON view  "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" is 'Créée le "+str(datetime.date.today())+"';\
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to \"EPLoire_Consult\";\
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to "+nomschema+";\
