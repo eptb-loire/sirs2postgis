@@ -6,6 +6,7 @@
 #21/07/2025 : dans le champ designation, concaténation de la désignation du SE et de la désignation de l'objet + concaténation de l'abrege et du libelle de la ref
 #31/07/2025 : correction des liens avec les tables ref pour les vues de niveau >1 (observations notamment)
 #05/08/2025 : annulation du comit du 31 juillet concernant la clause where 
+#27/10/2025 : prise en compte de la géométrie multipolygone
 #pour ne faire qu'une seule base : modifier temporairement auto_sirs2postgis.py pour appeler crea_view surla base souhaitée
 #utiliser  : sirs_crea_view_pg_1base.bat depuis srv-adobe (192.168.1.15)
 ################################################################################################################################
@@ -69,7 +70,9 @@ def crea_view(nomdb,pgcourt):
 			listegeometrie=[]
 			#la géométrie
 			#il y a des fausses lignes dans sirs (point début=point fin). Il faut les détecter pour en faire des points
-			rqgeometrie="select distinct case 	when st_length(st_geomfromtext(geometry))=0 then 'point'	else 'linestring' end case  from {}.{} where geometry is not null ;".format(nomschema,tgeoiq[0])
+			#rqgeometrie="select distinct case 	when st_length(st_geomfromtext(geometry))=0 then 'point'	else 'linestring' end case  from {}.{} where geometry is not null ;".format(nomschema,tgeoiq[0])
+			#27/10/2025 : prise en considération des polygones
+			rqgeometrie="select distinct case when st_area(st_geomfromtext(geometry))>0 then 'multipolygon' when st_length(st_geomfromtext(geometry))>0 then 'linestring' else 'point' end case  from {}.{} where geometry is not null ;".format(nomschema,tgeoiq[0])
 			cur.execute(rqgeometrie)
 			lgeometrie=cur.fetchall()
 			for geom in lgeometrie:
@@ -107,7 +110,10 @@ def crea_view(nomdb,pgcourt):
 				champgeomligne='  st_multi(st_setsrid(st_geomfromtext(obj.geometry), 2154))::geometry(MultiLineString,2154) AS geom '
 				# clausewherepoint=' where  st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154)) = 0::double precision'
 				# clausewhereligne=' where st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154)) > 0::double precision'
-			
+			#le 27/10/2025 pour le multipolygones : on utilise le champ geometry même si positiondebut/positionfin sont présent
+			champgeomplgn=' st_setsrid(st_geomfromtext(obj.geometry), 2154)::geometry(MultiPolygon,2154) AS geom '
+
+		
 			champtexte=','.join(listechamptexte)
 
 
@@ -151,9 +157,6 @@ def crea_view(nomdb,pgcourt):
 				#le 29/05/2024 : il existe des multilinestring dans couchdb. On passe donc tout en MultiLineString
 				# 2025-04-07 : pour les désordres, il faut créer la géométrie à partir de position début/position fin car sinon c'est en mode "plaqué" ; ajout du code corresondant à la condistion linestring+desordre
 				if geom=='linestring':
-					# print('table et champs : ')
-					# print(tgeoiq[0])#bornedigue
-					# print(listechamptexte)
 					rqcreaview= "\
 					drop view if exists "+nomschema+".v_"+tgeoiq[0]+"_l ;\
 					create or replace view "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" as (select row_number() over() "+nbvu+","+champtexteavectable+","+champgeomligne+" from "+nomschema+"."+tgeoiq[0]+" as obj "+listejointureref+jointurese+" where st_length(st_setsrid(st_geomfromtext(obj.geometry), 2154))>0 );\
@@ -161,6 +164,18 @@ def crea_view(nomdb,pgcourt):
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to \"EPLoire_Consult\";\
 					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to "+nomschema+";\
 					"
+				#27/10/2025 : prise en compte des polygones
+				if geom=='multipolygon':
+					# print('table et champs : ')
+					# print(tgeoiq[0])#bornedigue
+					# print(listechamptexte)
+					rqcreaview= "\
+					drop view if exists "+nomschema+".v_"+tgeoiq[0]+"_m ;\
+					create or replace view "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" as (select row_number() over() "+nbvu+","+champtexteavectable+","+champgeomplgn+" from "+nomschema+"."+tgeoiq[0]+" as obj "+listejointureref+jointurese+" where  obj.geometry ~~* 'multipolygon%'::text );\
+					comment ON view  "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" is 'Créée le "+str(datetime.date.today())+"';\
+					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to \"EPLoire_Consult\";\
+					grant select on table "+nomschema+".v_"+tgeoiq[0]+"_"+geom[0]+" to "+nomschema+";\
+					"					
 				cur.execute(rqcreaview)
 				conn.commit()
 				listevueniv0.append("v_{}_{}".format(tgeoiq[0],geom[0]))
